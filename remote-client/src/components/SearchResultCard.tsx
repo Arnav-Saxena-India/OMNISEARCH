@@ -6,7 +6,7 @@ interface SearchResultCardProps {
   filename: string;
   score: number;
   uri: string;
-  snippet: string;
+  content: string;
   searchQuery: string;
 }
 
@@ -36,7 +36,7 @@ function HighlightedSnippet({ text, query }: { text: string; query: string }) {
   );
 }
 
-export function SearchResultCard({ filename, score, uri, snippet, searchQuery }: SearchResultCardProps) {
+export function SearchResultCard({ filename, score, uri, content, searchQuery }: SearchResultCardProps) {
   return (
     <div className="flex flex-col gap-3 p-4 bg-slate-800/50 hover:bg-slate-800/80 border border-slate-700/50 rounded-xl shadow-sm transition-colors">
       <div className="flex items-center justify-between gap-3">
@@ -62,7 +62,7 @@ export function SearchResultCard({ filename, score, uri, snippet, searchQuery }:
         </div>
       </div>
       <div className="pl-9">
-        <HighlightedSnippet text={snippet} query={searchQuery} />
+        <HighlightedSnippet text={content} query={searchQuery} />
       </div>
     </div>
   );
