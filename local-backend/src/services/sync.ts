@@ -6,7 +6,7 @@ import { loadConfig } from '../config.js';
 const config = loadConfig();
 
 // Initialize the Supabase client with the service role key for admin privileges
-const supabase = createClient(config.supabaseUrl, config.supabaseServiceRoleKey, {
+export const supabase = createClient(config.supabaseUrl, config.supabaseServiceRoleKey, {
   auth: {
     persistSession: false
   }
@@ -101,33 +101,3 @@ export async function deleteRawFile(cloudPath: string): Promise<void> {
   }
 }
 
-/**
- * Uploads/Syncs the local SQLite database file to the Supabase bucket.
- * The client app will download this SQLite file on startup to query it in-memory.
- */
-export async function uploadDatabaseIndex(): Promise<void> {
-  if (config.isOffline) {
-    console.log(`[Sync (Offline Mode)] Skipping SQLite index sync to cloud.`);
-    return;
-  }
-
-  const dbPath = path.resolve(config.databaseUrl);
-  try {
-    const fileBuffer = await fs.readFile(dbPath);
-    console.log(`[Sync] Uploading SQLite index (${(fileBuffer.length / 1024).toFixed(1)} KB) to cloud...`);
-    
-    const { error } = await supabase.storage
-      .from(config.supabaseBucket)
-      .upload('omnisearch_index.sqlite', fileBuffer, {
-        contentType: 'application/x-sqlite3',
-        upsert: true
-      });
-
-    if (error) {
-      throw error;
-    }
-    console.log('[Sync] SQLite index successfully synced to cloud.');
-  } catch (error: any) {
-    console.error(`[Sync Error] Failed to sync database index: ${error.message}`);
-  }
-}
