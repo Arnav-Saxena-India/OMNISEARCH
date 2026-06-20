@@ -1,0 +1,13 @@
+package.json ----> es modules ---> ecma script
+they allow code sharing via import/export
+export function add2num(a,b){
+    return a+b;
+}
+
+import {add2num} from .js;
+console.log(add2num(5,5));
+
+
+
+old way was require 
+const reand= require(@xenovs/trandror);

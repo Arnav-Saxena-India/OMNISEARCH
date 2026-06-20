@@ -1,0 +1,31 @@
+{
+  "name": "omnisearch-backend",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Desktop daemon watcher, OCR, vector embedding and cloud sync runner for OmniSearch",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "search": "tsx src/search.ts",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx src/migrate.ts"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.43.4",
+    "@xenova/transformers": "^2.17.2",
+    "better-sqlite3": "^11.0.0",
+    "chokidar": "^3.6.0",
+    "dotenv": "^16.4.5",
+    "drizzle-orm": "^0.31.2",
+    "pdf-parse": "^1.1.1",
+    "tesseract.js": "^5.1.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.10",
+    "@types/node": "^20.14.2",
+    "@types/pdf-parse": "^1.1.4",
+    "drizzle-kit": "^0.22.7",
+    "tsx": "^4.15.2",
+    "typescript": "^5.4.5"
+  }
+}
