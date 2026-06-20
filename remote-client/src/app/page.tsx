@@ -39,6 +39,13 @@ export default function Home() {
   const [showSettings, setShowSettings] = useState(false);
   const [totalFilesCount, setTotalFilesCount] = useState(0);
 
+  // Local daemon state (Express on port 4000)
+  const [daemonStatus, setDaemonStatus] = useState<'unknown' | 'running' | 'offline'>('unknown');
+  const [daemonWatchDir, setDaemonWatchDir] = useState('');
+  const [newWatchDir, setNewWatchDir] = useState('');
+  const [watchDirSaving, setWatchDirSaving] = useState(false);
+  const [watchDirMessage, setWatchDirMessage] = useState('');
+
   const workerRef = useRef<Worker | null>(null);
 
   // Auto-detect if credentials are placeholders
@@ -158,6 +165,54 @@ export default function Home() {
     }
   }, []);
 
+  // Poll local Express daemon status every 5 seconds
+  useEffect(() => {
+    const pollDaemon = async () => {
+      try {
+        const res = await fetch('http://localhost:4000/api/status', { signal: AbortSignal.timeout(2000) });
+        if (res.ok) {
+          const data = await res.json();
+          setDaemonStatus('running');
+          setDaemonWatchDir(data.watchDir || '');
+          setNewWatchDir(prev => prev || data.watchDir || '');
+          if (data.fileCount !== undefined) setTotalFilesCount(data.fileCount);
+        } else {
+          setDaemonStatus('offline');
+        }
+      } catch {
+        setDaemonStatus('offline');
+      }
+    };
+    pollDaemon();
+    const interval = setInterval(pollDaemon, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Save new watchDir to daemon via POST /api/config
+  const handleSaveWatchDir = async () => {
+    if (!newWatchDir.trim()) return;
+    setWatchDirSaving(true);
+    setWatchDirMessage('');
+    try {
+      const res = await fetch('http://localhost:4000/api/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ watchDir: newWatchDir.trim() }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setDaemonWatchDir(data.watchDir);
+        setWatchDirMessage(`✓ Watcher restarted on: ${data.watchDir}`);
+      } else {
+        setWatchDirMessage(`✗ Error: ${data.error}`);
+      }
+    } catch (err: any) {
+      setWatchDirMessage(`✗ Could not reach daemon: ${err.message}`);
+    } finally {
+      setWatchDirSaving(false);
+    }
+  };
+
   // 4. Trigger Search In browser
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -247,41 +302,79 @@ export default function Home() {
       <main className="max-w-4xl mx-auto px-4 py-8">
         {/* Settings Drawer / Panel */}
         {showSettings && (
-          <div className="mb-8 p-6 bg-zinc-900/90 border border-zinc-850 rounded-2xl shadow-xl transition-all">
-            <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-              <Settings className="w-5 h-5 text-indigo-500" />
-              Supabase Credentials Settings
-            </h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-mono text-zinc-400 uppercase tracking-wider mb-1.5">Supabase URL</label>
-                <input 
-                  type="text" 
-                  value={supabaseConfig.url} 
-                  onChange={(e) => setSupabaseConfig({ ...supabaseConfig, url: e.target.value })}
-                  className="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg text-sm text-zinc-300 focus:outline-none focus:border-indigo-500"
-                />
+          <div className="mb-8 p-6 bg-zinc-900/90 border border-zinc-800 rounded-2xl shadow-xl transition-all space-y-6">
+
+            {/* Watched Folder Config (Local Daemon) */}
+            <div>
+              <h3 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
+                <FolderOpen className="w-5 h-5 text-indigo-500" />
+                Desktop Watcher Config
+              </h3>
+              <div className="flex items-center gap-1.5 mb-3 text-xs">
+                <span className={`w-2 h-2 rounded-full ${daemonStatus === 'running' ? 'bg-emerald-400' : 'bg-zinc-500'}`} />
+                <span className="text-zinc-400">Daemon: <span className="text-zinc-300 font-mono">{daemonStatus}</span></span>
+                {daemonWatchDir && <span className="text-zinc-500 ml-2 truncate max-w-xs font-mono">({daemonWatchDir})</span>}
               </div>
-              <div>
-                <label className="block text-xs font-mono text-zinc-400 uppercase tracking-wider mb-1.5">Anon API Key</label>
-                <input 
-                  type="password" 
-                  value={supabaseConfig.anonKey} 
-                  onChange={(e) => setSupabaseConfig({ ...supabaseConfig, anonKey: e.target.value })}
-                  className="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg text-sm text-zinc-300 focus:outline-none focus:border-indigo-500"
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="e.g. C:/Users/YourName/Documents"
+                  value={newWatchDir}
+                  onChange={(e) => setNewWatchDir(e.target.value)}
+                  className="flex-1 px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg text-sm text-zinc-300 focus:outline-none focus:border-indigo-500"
                 />
+                <button
+                  onClick={handleSaveWatchDir}
+                  disabled={watchDirSaving}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-700 text-white rounded-lg text-xs font-medium transition"
+                >
+                  {watchDirSaving ? 'Saving...' : 'Save'}
+                </button>
               </div>
+              {watchDirMessage && (
+                <p className={`mt-2 text-xs font-mono ${watchDirMessage.startsWith('✓') ? 'text-emerald-400' : 'text-red-400'}`}>
+                  {watchDirMessage}
+                </p>
+              )}
             </div>
-            <div className="mt-4 flex gap-3 justify-end">
-              <button 
-                onClick={() => {
-                  setShowSettings(false);
-                  fetchDatabaseFromCloud();
-                }}
-                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-medium transition"
-              >
-                Save & Connect Cloud
-              </button>
+
+            {/* Supabase Settings */}
+            <div>
+              <h3 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
+                <Settings className="w-5 h-5 text-indigo-500" />
+                Supabase Credentials
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-mono text-zinc-400 uppercase tracking-wider mb-1.5">Supabase URL</label>
+                  <input
+                    type="text"
+                    value={supabaseConfig.url}
+                    onChange={(e) => setSupabaseConfig({ ...supabaseConfig, url: e.target.value })}
+                    className="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg text-sm text-zinc-300 focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-mono text-zinc-400 uppercase tracking-wider mb-1.5">Anon API Key</label>
+                  <input
+                    type="password"
+                    value={supabaseConfig.anonKey}
+                    onChange={(e) => setSupabaseConfig({ ...supabaseConfig, anonKey: e.target.value })}
+                    className="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg text-sm text-zinc-300 focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+              </div>
+              <div className="mt-4 flex gap-3 justify-end">
+                <button
+                  onClick={() => {
+                    setShowSettings(false);
+                    fetchDatabaseFromCloud();
+                  }}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-medium transition"
+                >
+                  Save and Connect Cloud
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -432,14 +525,13 @@ export default function Home() {
                   </div>
 
                   <div className="flex items-center justify-end">
-                    <a 
-                      href={row.cloud_url} 
-                      target="_blank" 
-                      rel="noopener noreferrer"
-                      className="flex items-center gap-1.5 px-4 py-2 border border-zinc-700 hover:border-zinc-600 bg-zinc-800/30 hover:bg-zinc-800/60 text-zinc-300 text-xs font-semibold rounded-xl transition"
+                     <a 
+                      href={row.cloud_url}
+                      download={row.file_name}
+                      className="flex items-center gap-1.5 px-4 py-2 border border-indigo-700/50 hover:border-indigo-500 bg-indigo-950/30 hover:bg-indigo-900/40 text-indigo-300 hover:text-white text-xs font-semibold rounded-xl transition"
                     >
                       <Download className="w-3.5 h-3.5" />
-                      Get Document
+                      Download
                     </a>
                   </div>
                 </div>

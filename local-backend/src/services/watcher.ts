@@ -1,8 +1,12 @@
 import chokidar from 'chokidar';
 import path from 'path';
 
-// List of file extensions to ignore on the edge to save bandwidth and index size
-const EXCLUDED_EXTENSIONS = ['.exe', '.dll', '.sys', '.tmp', '.bat', '.sh', '.msi', '.ds_store', '.lnk'];
+// ── Binary extensions the watcher should never emit events for ──
+const BLOCKED_EXTENSIONS = new Set([
+  '.exe', '.dll', '.dmg', '.iso', '.zip', '.tar', '.gz', '.bin',
+  '.msi', '.sys', '.bat', '.sh', '.com', '.cmd', '.scr',
+  '.7z', '.rar', '.bz2', '.xz', '.lnk', '.tmp',
+]);
 
 interface WatcherCallbacks {
   onAddOrChange: (filePath: string) => Promise<void>;
@@ -12,24 +16,43 @@ interface WatcherCallbacks {
 /**
  * Initializes and starts the directory watcher using chokidar.
  * Automatically handles startup ingestion of existing files and tracks changes.
+ *
+ * Ignore rules (evaluated at the chokidar level — files never even reach the extractor):
+ *   - Hidden files/directories (dotfiles like .DS_Store, .git)
+ *   - Microsoft Office lock files (~$*)
+ *   - Windows system files (Thumbs.db, desktop.ini)
+ *   - All blocked binary extensions (.exe, .dll, .zip, etc.)
  */
 export function startWatcher(watchDir: string, callbacks: WatcherCallbacks) {
   console.log(`[Watcher] Monitoring directory: ${watchDir}`);
 
   const watcher = chokidar.watch(watchDir, {
-    ignored: (fileOrDirPath) => {
+    ignored: (fileOrDirPath: string) => {
       if (!fileOrDirPath) return false;
+
+      const base = path.basename(fileOrDirPath);
       const ext = path.extname(fileOrDirPath).toLowerCase();
-      const base = path.basename(fileOrDirPath).toLowerCase();
-      // Ignore hidden files and system exclusions
-      return EXCLUDED_EXTENSIONS.includes(ext) || base.startsWith('.') || base === 'thumbs.db';
+
+      // Hidden files and directories (e.g. .DS_Store, .git)
+      if (base.startsWith('.')) return true;
+
+      // Microsoft Office temporary lock files (e.g. ~$Document.docx)
+      if (base.startsWith('~$')) return true;
+
+      // Windows system detritus
+      if (base.toLowerCase() === 'thumbs.db' || base.toLowerCase() === 'desktop.ini') return true;
+
+      // Blocked binary extensions
+      if (BLOCKED_EXTENSIONS.has(ext)) return true;
+
+      return false;
     },
     persistent: true,
-    ignoreInitial: false, // Scans existing files on initial startup to backfill index
+    ignoreInitial: false, // Scan existing files on startup to backfill the index
     awaitWriteFinish: {
-      stabilityThreshold: 1500, // Wait 1.5 seconds after final write to start OCR (avoids reading half-copied files)
-      pollInterval: 100
-    }
+      stabilityThreshold: 1500, // Wait 1.5s after the last write before processing (avoids half-copied files)
+      pollInterval: 100,
+    },
   });
 
   watcher

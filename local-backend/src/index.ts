@@ -9,21 +9,19 @@ import { extractText } from './services/ocr.js';
 import { processTextAndEmbed } from './services/embed.js';
 import { startWatcher } from './services/watcher.js';
 import { uploadRawFile, deleteRawFile, uploadDatabaseIndex } from './services/sync.js';
+import { initServer } from './server.js';
+import type { FSWatcher } from 'chokidar';
 
 const config = loadConfig();
 
-// Debounce state for uploading the SQLite index to Cloud Storage
+// ── Active watcher reference (replaced on directory change) ─────
+let activeWatcher: FSWatcher | null = null;
+
+// ── Debounce state ───────────────────────────────────────────────
 let syncDebounceTimeout: NodeJS.Timeout | null = null;
 
-/**
- * Debounces database index synchronization.
- * If 100 files are added in rapid succession, we only upload the .sqlite database
- * once (5 seconds after the last file has finished processing).
- */
 function queueDatabaseSync() {
-  if (syncDebounceTimeout) {
-    clearTimeout(syncDebounceTimeout);
-  }
+  if (syncDebounceTimeout) clearTimeout(syncDebounceTimeout);
   syncDebounceTimeout = setTimeout(async () => {
     try {
       await uploadDatabaseIndex();
@@ -33,146 +31,121 @@ function queueDatabaseSync() {
   }, 5000);
 }
 
-/**
- * Handles adding or updating a local document.
- * 1. Reads & extracts text (via PDF parsing, OCR, or direct text reading).
- * 2. Generates token-safe 384-dim semantic vectors.
- * 3. Uploads the raw file to Supabase Cloud Storage (getting a signed URL).
- * 4. Inserts or updates the local SQLite database record.
- * 5. Triggers a debounced upload of the index file.
- */
+// ── File Processing ──────────────────────────────────────────────
 async function handleAddOrChange(filePath: string) {
   try {
     const fileName = path.basename(filePath);
     const stats = await fs.stat(filePath);
-    
-    // Skip folders
     if (stats.isDirectory()) return;
 
     console.log(`[Daemon] Processing file: ${fileName} (${(stats.size / 1024).toFixed(1)} KB)`);
 
-    // 1. Text & Category extraction
+    // 1. Extract text & category
     const { text, category } = await extractText(filePath);
 
-    // 2. Token-safe embedding generation
+    if (category === 'blocked') {
+      console.log(`[Daemon] Skipping indexing for blocked file: ${fileName}`);
+      return;
+    }
+
+    // 2. Generate token-safe 384-dim embedding
     const { textContent, vector } = await processTextAndEmbed(text);
 
-    // Check if the file was already indexed previously (to overwrite/update)
+    // 3. CRITICAL FIX: Build a localhost:4000 download URL instead of file://
+    //    This allows the browser to download the file without the file:// block.
+    const encodedName = encodeURIComponent(fileName);
+    const localUrl = `http://localhost:4000/files/${encodedName}`;
+
     const existingFile = db.select().from(indexedFiles).where(eq(indexedFiles.localPath, filePath)).get();
-    
-    let cloudUrl = '';
-    let cloudPath = '';
 
     if (existingFile) {
-      console.log(`[Daemon] File already exists in index. Re-uploading...`);
-      // Clean up the old cloud file to save space
       await deleteRawFile(existingFile.cloudPath);
     }
 
-    // 3. Upload raw file to cloud storage
+    // 4. Attempt cloud upload (no-op if offline mode is active)
     const uploadResult = await uploadRawFile(filePath);
-    cloudUrl = uploadResult.cloudUrl;
-    cloudPath = uploadResult.cloudPath;
+    // Prefer cloud URL if available, otherwise fall back to the local Express URL
+    const cloudUrl = uploadResult.cloudUrl.startsWith('file://') ? localUrl : uploadResult.cloudUrl;
+    const cloudPath = uploadResult.cloudPath;
 
-    // 4. Update SQLite database
+    // 5. Write to SQLite
     const now = Date.now();
     const vectorBuffer = Buffer.from(vector.buffer);
 
     if (existingFile) {
       db.update(indexedFiles)
-        .set({
-          fileName,
-          fileSize: stats.size,
-          category,
-          textContent,
-          cloudUrl,
-          cloudPath,
-          vector: vectorBuffer,
-          updatedAt: now
-        })
+        .set({ fileName, fileSize: stats.size, category, textContent, cloudUrl, cloudPath, vector: vectorBuffer, updatedAt: now })
         .where(eq(indexedFiles.localPath, filePath))
         .run();
       console.log(`[Daemon] Updated index entry for ${fileName}`);
     } else {
       db.insert(indexedFiles)
-        .values({
-          localPath: filePath,
-          fileName,
-          fileSize: stats.size,
-          category,
-          textContent,
-          cloudUrl,
-          cloudPath,
-          vector: vectorBuffer,
-          createdAt: now,
-          updatedAt: now
-        })
+        .values({ localPath: filePath, fileName, fileSize: stats.size, category, textContent, cloudUrl, cloudPath, vector: vectorBuffer, createdAt: now, updatedAt: now })
         .run();
       console.log(`[Daemon] Created index entry for ${fileName}`);
     }
 
-    // 5. Sync the updated index db to cloud
     queueDatabaseSync();
   } catch (error) {
     console.error(`[Daemon Error] Failed to handle add/change for ${filePath}:`, error);
   }
 }
 
-/**
- * Handles deleting a document.
- * 1. Checks if file is present in SQLite.
- * 2. Deletes raw file from cloud storage.
- * 3. Deletes database entry.
- * 4. Triggers debounced sync of index file.
- */
 async function handleRemove(filePath: string) {
   try {
     const fileName = path.basename(filePath);
     const existingFile = db.select().from(indexedFiles).where(eq(indexedFiles.localPath, filePath)).get();
-    
+
     if (!existingFile) {
       console.log(`[Daemon] File ${fileName} was not indexed. Skipping removal sync.`);
       return;
     }
 
-    // 1. Remove from cloud storage
     await deleteRawFile(existingFile.cloudPath);
-
-    // 2. Remove from database
     db.delete(indexedFiles).where(eq(indexedFiles.localPath, filePath)).run();
     console.log(`[Daemon] Removed index entry for ${fileName}`);
-
-    // 3. Sync database change to cloud
     queueDatabaseSync();
   } catch (error) {
     console.error(`[Daemon Error] Failed to handle removal for ${filePath}:`, error);
   }
 }
 
-/**
- * Entrypoint to start the local backend daemon
- */
+// ── Reusable watcher starter ─────────────────────────────────────
+async function spawnWatcher(directory: string) {
+  if (activeWatcher) {
+    console.log(`[Daemon] Closing existing watcher...`);
+    await activeWatcher.close();
+    activeWatcher = null;
+  }
+
+  console.log(`[Daemon] Starting watcher on: ${directory}`);
+  await fs.mkdir(directory, { recursive: true });
+
+  activeWatcher = startWatcher(directory, {
+    onAddOrChange: handleAddOrChange,
+    onRemove: handleRemove
+  });
+}
+
+// ── Main Entrypoint ──────────────────────────────────────────────
 async function main() {
   console.log('====================================');
   console.log('      OMNISearch Desktop Daemon      ');
   console.log('====================================');
 
-  // Ensure database is migrated to latest schema
   await runMigrations();
 
-  // Create watch folder if it doesn't exist
-  await fs.mkdir(config.watchDir, { recursive: true });
+  // Start the initial watcher
+  await spawnWatcher(config.watchDir);
 
-  // Start watching local folders
-  const watcher = startWatcher(config.watchDir, {
-    onAddOrChange: handleAddOrChange,
-    onRemove: handleRemove
+  // Initialize the Express API server; pass the watcher-restart callback
+  initServer(config.watchDir, async (newDir: string) => {
+    await spawnWatcher(newDir);
   });
 
-  // Handle clean exit
   process.on('SIGINT', () => {
     console.log('\n[Daemon] Shutting down cleanly...');
-    watcher.close();
+    if (activeWatcher) activeWatcher.close();
     sqliteConnection.close();
     process.exit(0);
   });

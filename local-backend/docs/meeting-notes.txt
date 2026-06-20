@@ -1,0 +1,14 @@
+Q3 Budget Review Meeting Notes
+Date: June 18, 2026
+Attendees: Sarah Chen, Raj Patel, Maria Gonzalez
+
+Key Decisions:
+1. Marketing budget increased by 15% for AI campaign launch
+2. Engineering headcount approved: 3 senior developers
+3. Cloud infrastructure migration deadline moved to August 2026
+4. Customer support chatbot deployment greenlit for September
+
+Action Items:
+- Sarah to prepare revised forecast by Friday
+- Raj to finalize vendor contracts for GPU cluster
+- Maria to draft customer communication plan
