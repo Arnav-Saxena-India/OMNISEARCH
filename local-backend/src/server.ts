@@ -62,6 +62,21 @@ app.get('/api/status', (req, res) => {
   }
 });
 
+// ── GET /api/database ───────────────────────────────────────────
+app.get('/api/database', (req, res) => {
+  try {
+    const dbPath = path.resolve(config.databaseUrl);
+    if (!fs.existsSync(dbPath)) {
+      return res.status(404).json({ error: 'Database file not found.' });
+    }
+    res.setHeader('Content-Type', 'application/x-sqlite3');
+    res.setHeader('Content-Disposition', 'attachment; filename="omnisearch.db"');
+    return res.sendFile(dbPath);
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
 // ── POST /api/config ────────────────────────────────────────────
 app.post('/api/config', (req, res) => {
   const { watchDir } = req.body as { watchDir?: string };

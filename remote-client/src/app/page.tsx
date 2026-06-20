@@ -46,6 +46,22 @@ export default function Home() {
   const [watchDirSaving, setWatchDirSaving] = useState(false);
   const [watchDirMessage, setWatchDirMessage] = useState('');
 
+  // Connection Mode (Local Network vs Remote Cloud)
+  const [connectionMode, setConnectionMode] = useState<'local' | 'remote'>('local');
+
+  // Load connectionMode on mount
+  useEffect(() => {
+    const savedMode = localStorage.getItem('omnisearch_connection_mode');
+    if (savedMode === 'local' || savedMode === 'remote') {
+      setConnectionMode(savedMode);
+    }
+  }, []);
+
+  const handleSetConnectionMode = (mode: 'local' | 'remote') => {
+    setConnectionMode(mode);
+    localStorage.setItem('omnisearch_connection_mode', mode);
+  };
+
   const workerRef = useRef<Worker | null>(null);
 
   // Auto-detect if credentials are placeholders
@@ -155,15 +171,49 @@ export default function Home() {
     }
   };
 
-  // Try auto-loading DB from cloud on mount if credentials look valid
-  useEffect(() => {
-    const isPlaceholder = 
-      supabaseConfig.url.includes('replace-with-your-project') || 
-      supabaseConfig.anonKey.includes('replace-with-your-anon-key');
-    if (!isPlaceholder) {
-      fetchDatabaseFromCloud();
+  // Try auto-loading DB from local or cloud based on connectionMode
+  const fetchDatabaseFromLocal = async () => {
+    setDbStatus('loading');
+    setErrorMessage('');
+    try {
+      console.log('[PWA] Downloading index file from Local Daemon');
+      const res = await fetch('http://localhost:4000/api/database');
+      if (!res.ok) {
+        throw new Error(`Daemon database endpoint returned status ${res.status}`);
+      }
+      const data = await res.blob();
+      const arrayBuffer = await data.arrayBuffer();
+      const loadedDb = await loadSqlDatabase(arrayBuffer);
+
+      // Query file count
+      const countRes = loadedDb.exec('SELECT COUNT(*) as count FROM indexed_files');
+      if (countRes.length > 0 && countRes[0].values.length > 0) {
+        setTotalFilesCount(countRes[0].values[0][0] as number);
+      }
+
+      setDb(loadedDb);
+      setDbStatus('ready');
+    } catch (err: any) {
+      console.error(err);
+      setDbStatus('error');
+      setErrorMessage(`Failed to auto-load database from local daemon: ${err.message}. Make sure your desktop daemon is running or upload omnisearch.db manually.`);
     }
-  }, []);
+  };
+
+  useEffect(() => {
+    // Determine the connection mode dynamically
+    const mode = localStorage.getItem('omnisearch_connection_mode') || 'local';
+    if (mode === 'local') {
+      fetchDatabaseFromLocal();
+    } else {
+      const isPlaceholder = 
+        supabaseConfig.url.includes('replace-with-your-project') || 
+        supabaseConfig.anonKey.includes('replace-with-your-anon-key');
+      if (!isPlaceholder) {
+        fetchDatabaseFromCloud();
+      }
+    }
+  }, [connectionMode]);
 
   // Poll local Express daemon status every 5 seconds
   useEffect(() => {
@@ -304,6 +354,45 @@ export default function Home() {
         {showSettings && (
           <div className="mb-8 p-6 bg-zinc-900/90 border border-zinc-800 rounded-2xl shadow-xl transition-all space-y-6">
 
+            {/* Connection Mode Selector */}
+            <div>
+              <h3 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
+                <Cloud className="w-5 h-5 text-indigo-500" />
+                Connection Mode
+              </h3>
+              <div className="flex bg-zinc-950 p-1 rounded-xl border border-zinc-800 max-w-md">
+                <button
+                  type="button"
+                  onClick={() => handleSetConnectionMode('local')}
+                  className={`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-semibold rounded-lg transition-all ${
+                    connectionMode === 'local'
+                      ? 'bg-indigo-600 text-white shadow-lg'
+                      : 'text-zinc-400 hover:text-zinc-200'
+                  }`}
+                >
+                  <Cpu className="w-3.5 h-3.5" />
+                  Local Network
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSetConnectionMode('remote')}
+                  className={`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-semibold rounded-lg transition-all ${
+                    connectionMode === 'remote'
+                      ? 'bg-indigo-600 text-white shadow-lg'
+                      : 'text-zinc-400 hover:text-zinc-200'
+                  }`}
+                >
+                  <Cloud className="w-3.5 h-3.5" />
+                  Remote Cloud
+                </button>
+              </div>
+              <p className="mt-2 text-xs text-zinc-500 leading-normal">
+                {connectionMode === 'local'
+                  ? '✓ Auto-connecting to desktop edge node on port 4000. Low latency, 100% private.'
+                  : '✓ Fetching search index database and downloading files from Supabase secure cloud storage.'}
+              </p>
+            </div>
+
             {/* Watched Folder Config (Local Daemon) */}
             <div>
               <h3 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
@@ -394,24 +483,44 @@ export default function Home() {
             )}
 
             <div className="flex flex-col sm:flex-row gap-3 items-center justify-center">
-              {!isOfflineMode && (
+              {connectionMode === 'local' ? (
                 <button
-                  onClick={fetchDatabaseFromCloud}
+                  onClick={fetchDatabaseFromLocal}
                   disabled={dbStatus === 'loading'}
                   className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:bg-indigo-800 text-white rounded-xl text-sm font-medium transition"
                 >
                   {dbStatus === 'loading' ? (
                     <>
                       <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      Downloading...
+                      Loading...
                     </>
                   ) : (
                     <>
                       <Download className="w-4 h-4" />
-                      Download from Supabase
+                      Fetch from Local Daemon
                     </>
                   )}
                 </button>
+              ) : (
+                !isOfflineMode && (
+                  <button
+                    onClick={fetchDatabaseFromCloud}
+                    disabled={dbStatus === 'loading'}
+                    className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:bg-indigo-800 text-white rounded-xl text-sm font-medium transition"
+                  >
+                    {dbStatus === 'loading' ? (
+                      <>
+                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        Downloading...
+                      </>
+                    ) : (
+                      <>
+                        <Download className="w-4 h-4" />
+                        Download from Supabase
+                      </>
+                    )}
+                  </button>
+                )
               )}
               
               <label className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-2.5 border border-zinc-700 hover:bg-zinc-800 text-zinc-300 rounded-xl text-sm font-medium cursor-pointer transition">
@@ -526,7 +635,11 @@ export default function Home() {
 
                   <div className="flex items-center justify-end">
                      <a 
-                      href={row.cloud_url}
+                      href={
+                        connectionMode === 'local'
+                          ? `http://localhost:4000/files/${encodeURIComponent(row.file_name)}`
+                          : row.cloud_url
+                      }
                       download={row.file_name}
                       className="flex items-center gap-1.5 px-4 py-2 border border-indigo-700/50 hover:border-indigo-500 bg-indigo-950/30 hover:bg-indigo-900/40 text-indigo-300 hover:text-white text-xs font-semibold rounded-xl transition"
                     >
