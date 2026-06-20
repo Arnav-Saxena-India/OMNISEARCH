@@ -18,6 +18,7 @@ import {
   FolderOpen
 } from 'lucide-react';
 import { loadSqlDatabase, querySimilarity, DatabaseResultRow } from './db-loader';
+import { SearchResultCard } from '../components/SearchResultCard';
 
 export default function Home() {
   // App state
@@ -310,6 +311,22 @@ export default function Home() {
         </div>
         
         <div className="flex items-center gap-3">
+          {/* Network Mode Chip / Toggle */}
+          <div className="hidden sm:flex items-center bg-zinc-900 rounded-full border border-zinc-800 p-0.5">
+            <button
+              onClick={() => handleSetConnectionMode('local')}
+              className={`px-3 py-1 rounded-full text-[10px] font-semibold tracking-wide transition ${connectionMode === 'local' ? 'bg-indigo-600 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}
+            >
+              LOCAL DAEMON
+            </button>
+            <button
+              onClick={() => handleSetConnectionMode('remote')}
+              className={`px-3 py-1 rounded-full text-[10px] font-semibold tracking-wide transition ${connectionMode === 'remote' ? 'bg-indigo-600 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}
+            >
+              CLOUD SYNC
+            </button>
+          </div>
+
           {/* Sync indicator */}
           <button 
             onClick={() => !isOfflineMode && fetchDatabaseFromCloud()}
@@ -349,7 +366,7 @@ export default function Home() {
         </div>
       </header>
 
-      <main className="max-w-4xl mx-auto px-4 py-8">
+      <main className="w-full max-w-2xl mx-auto px-4 md:px-0 py-8">
         {/* Settings Drawer / Panel */}
         {showSettings && (
           <div className="mb-8 p-6 bg-zinc-900/90 border border-zinc-800 rounded-2xl shadow-xl transition-all space-y-6">
@@ -600,54 +617,19 @@ export default function Home() {
         <div className="space-y-4">
           {searchResults.length > 0 ? (
             searchResults.map((row) => {
-              const score = (row.similarity * 100).toFixed(1);
-              const scoreNum = parseFloat(score);
-              const scoreColor = scoreNum > 70 
-                ? 'text-emerald-400 bg-emerald-950/50 border-emerald-800/30' 
-                : scoreNum > 40 
-                  ? 'text-amber-400 bg-amber-950/50 border-amber-800/30' 
-                  : 'text-zinc-400 bg-zinc-950/50 border-zinc-800/30';
-
+              const uri = connectionMode === 'local'
+                ? `http://localhost:4000/files/${encodeURIComponent(row.file_name)}`
+                : row.cloud_url;
+                
               return (
-                <div 
+                <SearchResultCard
                   key={row.id}
-                  className="p-5 bg-zinc-900/70 border border-zinc-850 rounded-2xl hover:border-zinc-750 transition hover:shadow-lg flex flex-col md:flex-row justify-between gap-4"
-                >
-                  <div className="space-y-2 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="p-1.5 rounded-lg bg-zinc-800/60 inline-block">
-                        {getCategoryIcon(row.category)}
-                      </span>
-                      <h4 className="font-semibold text-white text-base tracking-tight">{row.file_name}</h4>
-                      <span className={`text-[10px] uppercase font-mono px-2 py-0.5 rounded border ${scoreColor}`}>
-                        {score}% Match
-                      </span>
-                    </div>
-
-                    <p className="text-zinc-400 text-sm leading-relaxed font-sans pl-1">
-                      {row.text_content ? `"...${row.text_content}..."` : '(No text extracted)'}
-                    </p>
-
-                    <div className="text-[10px] text-zinc-500 font-mono tracking-tighter pl-1">
-                      Local Path: <span className="text-zinc-400">{row.local_path}</span>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-end">
-                     <a 
-                      href={
-                        connectionMode === 'local'
-                          ? `http://localhost:4000/files/${encodeURIComponent(row.file_name)}`
-                          : row.cloud_url
-                      }
-                      download={row.file_name}
-                      className="flex items-center gap-1.5 px-4 py-2 border border-indigo-700/50 hover:border-indigo-500 bg-indigo-950/30 hover:bg-indigo-900/40 text-indigo-300 hover:text-white text-xs font-semibold rounded-xl transition"
-                    >
-                      <Download className="w-3.5 h-3.5" />
-                      Download
-                    </a>
-                  </div>
-                </div>
+                  filename={row.file_name}
+                  score={row.similarity}
+                  uri={uri}
+                  snippet={row.text_content || ''}
+                  searchQuery={searchQuery}
+                />
               );
             })
           ) : (
