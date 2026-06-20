@@ -10,6 +10,7 @@ export interface Config {
   supabaseBucket: string;
   watchDir: string;
   databaseUrl: string;
+  isOffline: boolean;
 }
 
 export function loadConfig(): Config {
@@ -19,21 +20,22 @@ export function loadConfig(): Config {
     SUPABASE_BUCKET,
     WATCH_DIR,
     DATABASE_URL,
+    OFFLINE,
   } = process.env;
 
-  if (!SUPABASE_URL) {
-    throw new Error('Missing SUPABASE_URL environment variable.');
-  }
-
-  if (!SUPABASE_SERVICE_ROLE_KEY) {
-    throw new Error('Missing SUPABASE_SERVICE_ROLE_KEY environment variable.');
-  }
+  // Auto-detect offline mode if OFFLINE=true or credentials are placeholder/missing
+  const isOffline = OFFLINE === 'true' || 
+                    !SUPABASE_URL || 
+                    SUPABASE_URL.includes('replace-with-your-project') ||
+                    !SUPABASE_SERVICE_ROLE_KEY || 
+                    SUPABASE_SERVICE_ROLE_KEY.includes('replace-with-your-service-role-key');
 
   return {
-    supabaseUrl: SUPABASE_URL,
-    supabaseServiceRoleKey: SUPABASE_SERVICE_ROLE_KEY,
+    supabaseUrl: SUPABASE_URL || '',
+    supabaseServiceRoleKey: SUPABASE_SERVICE_ROLE_KEY || '',
     supabaseBucket: SUPABASE_BUCKET || 'omnisearch-files',
     watchDir: path.resolve(WATCH_DIR || './docs'),
     databaseUrl: DATABASE_URL || 'omnisearch.db',
+    isOffline,
   };
 }

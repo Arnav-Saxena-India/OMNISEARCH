@@ -41,6 +41,14 @@ export async function uploadRawFile(filePath: string): Promise<{ cloudUrl: strin
   const fileBuffer = await fs.readFile(filePath);
   const fileName = path.basename(filePath);
   
+  if (config.isOffline) {
+    console.log(`[Sync (Offline Mode)] Skipping file upload for ${fileName}. Using local file URL.`);
+    return {
+      cloudUrl: `file://${path.resolve(filePath)}`,
+      cloudPath: `local/${Date.now()}_${fileName}`
+    };
+  }
+
   // Create a structured folder path inside the bucket
   const cloudPath = `raw/${Date.now()}_${fileName}`;
   const contentType = getContentType(filePath);
@@ -78,6 +86,11 @@ export async function uploadRawFile(filePath: string): Promise<{ cloudUrl: strin
  * Deletes a file from Supabase storage using its cloud path.
  */
 export async function deleteRawFile(cloudPath: string): Promise<void> {
+  if (config.isOffline) {
+    console.log(`[Sync (Offline Mode)] Skipping file deletion from cloud bucket: ${cloudPath}`);
+    return;
+  }
+
   console.log(`[Sync] Deleting file from storage bucket: ${cloudPath}`);
   const { error } = await supabase.storage
     .from(config.supabaseBucket)
@@ -93,6 +106,11 @@ export async function deleteRawFile(cloudPath: string): Promise<void> {
  * The client app will download this SQLite file on startup to query it in-memory.
  */
 export async function uploadDatabaseIndex(): Promise<void> {
+  if (config.isOffline) {
+    console.log(`[Sync (Offline Mode)] Skipping SQLite index sync to cloud.`);
+    return;
+  }
+
   const dbPath = path.resolve(config.databaseUrl);
   try {
     const fileBuffer = await fs.readFile(dbPath);
